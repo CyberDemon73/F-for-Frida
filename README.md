@@ -51,7 +51,7 @@ pip install requests tqdm colorama
 2. **Run the Script**:
    - Open a terminal or command prompt and execute the script as follows:
    ```bash
-   python frida_server_manager.py
+   python F-for-Frida.py
    ```
 
 3. **Follow the Prompts**:
