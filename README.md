@@ -1,132 +1,133 @@
-### README.md
+# F-For-Frida
 
-# Frida Server Automation Script
+**F-For-Frida** is a Python script that automates the process of managing and interacting with the Frida server on an Android device. It simplifies starting, stopping, and monitoring the Frida server through an ADB (Android Debug Bridge) connection, ensuring that Frida runs with the appropriate permissions on the connected device. 
 
-This script automates the installation and management of the Frida server on an Android device via ADB (Android Debug Bridge). It checks if Frida is already installed, handles version compatibility, and installs the Frida server if required. Additionally, it can install the Frida tools on your local machine and ensure they match the version of Frida installed on your device.
-
----
+The script also provides features to check if the device is rooted, verify the correct architecture, and handle different Frida versions.
 
 ## Features
-- **Device Root Access Check**: Confirms if the connected Android device is rooted before proceeding with Frida installation.
-- **Frida Server Installation**: Downloads and installs the Frida server on your Android device based on the specified version.
-- **Version Compatibility**: Ensures the installed Frida server version on the Android device matches the Frida version on your local machine.
-- **Frida Tools Installation**: Automatically installs or updates `frida-tools` on your local machine to match the Frida version.
-- **Custom Path Handling**: Allows the user to specify custom paths for the Frida server binaries.
-- **Logging**: Logs important events and actions taken by the script for later review.
 
----
+- **Device Connection Detection**: Automatically checks if an Android device is connected and authorized for ADB communication.
+- **Root Access Verification**: Confirms if the connected device has root privileges (required for running Frida).
+- **Frida Server Management**:
+  - **Start/Stop Frida Server**: Start and stop the Frida server on the device.
+  - **PID Management**: Retrieve and display PIDs for running Frida server instances.
+  - **Architecture Detection**: Automatically detects the architecture of the connected device and installs the correct version of the Frida server.
+- **Frida Server Version Management**: Install or use specific versions of the Frida server based on user input.
+- **Real-Time Monitoring**: Monitors the Frida server's status and verifies if it is running as expected.
 
-## Requirements
+## Prerequisites
 
-### Python Dependencies:
-1. Python 3.x
-2. `requests` - For downloading Frida server binaries.
-3. `tqdm` - For displaying download progress.
-4. `colorama` - For terminal color formatting.
-5. `adb` - Ensure ADB is installed on your system and is accessible via your `PATH`.
+1. **ADB (Android Debug Bridge)** installed and configured on your machine.
+2. **Python 3.6+** installed.
+3. **Frida-tools** installed on your local machine:
+   ```bash
+   pip install frida-tools
+   ```
+4. An **Android device** with root access and USB debugging enabled.
 
-You can install the required Python dependencies using pip:
+## Installation
 
-```bash
-pip install requests tqdm colorama
-```
+1. **Clone the Repository**:
+   ```bash
+   git clone https://github.com/CyberDemon73/F-For-Frida.git
+   cd F-For-Frida
+   ```
 
-### System Dependencies:
-- ADB (Android Debug Bridge)
-- xz-utils (`xz`) - For decompressing `.xz` files. Make sure `xz` is installed on your system:
-  - **Debian/Ubuntu**: `sudo apt-get install xz-utils`
-  - **macOS (Homebrew)**: `brew install xz`
-  - **Windows**: Install via WSL or a third-party package manager like Chocolately.
+2. **Install Python Dependencies**:
+   Install the necessary Python libraries by running:
+   ```bash
+   pip install -r requirements.txt
+   ```
+   Required dependencies:
+   - `tqdm`
+   - `colorama`
+   - `requests`
 
----
+3. **Connect Your Android Device**:
+   - Enable **USB Debugging** on your Android device.
+   - Connect the device via USB and authorize the ADB connection.
+
+4. **Ensure Your Device is Rooted**:
+   Frida requires root access to function properly. Verify root access by running:
+   ```bash
+   adb shell su -c "id"
+   ```
 
 ## Usage
 
-### Running the Script:
-
-1. **Ensure Device is Connected and Rooted**:
-   - Make sure your Android device is connected via USB and is detected by ADB.
-   - Your device must be rooted to install and run the Frida server.
-
-2. **Run the Script**:
-   - Open a terminal or command prompt and execute the script as follows:
-   ```bash
-   python F-for-Frida.py
-   ```
-
-3. **Follow the Prompts**:
-   - The script will ask for the desired Frida version (e.g., `16.1.17`). If Frida is not installed, it will download, extract, and install it on your Android device.
-   - If Frida is already installed, the script will check the version and give you the option to update or leave it unchanged.
-
-4. **Custom Path Option**:
-   - The script provides an option to specify a custom path for the Frida server binary on the device, defaulting to `/data/local/tmp`.
-
-### Example:
+To run the script, execute the following command:
 
 ```bash
-Enter the Frida version you want to use or install (e.g., 16.1.17): 16.1.17
-Waiting for a device to be connected...
-Frida version 16.1.17 is already installed on your machine.
-Checking if Frida is running on the device...
-Frida server is not found on the device. Proceeding to install...
-Downloading Frida server from: https://github.com/frida/frida/releases/download/16.1.17/frida-server-16.1.17-android-arm64.xz
-Extracting frida-server-16.1.17-android-arm64.xz...
-Frida 16.1.17 installed on the device in /data/local/tmp/frida-server-16.1.17-android-arm64.
-Starting Frida server at /data/local/tmp/frida-server-16.1.17-android-arm64 with root privileges...
-Frida server started successfully.
+python3 F-For-Frida-v3.py
 ```
 
----
+### Script Flow
 
-## Key Functions Overview
+1. **Check Device Connection**: The script first checks if your Android device is connected and authorized.
+   
+2. **Root Access Confirmation**: It verifies if the connected device has root access.
 
-### `check_root()`
-- Verifies if the connected Android device has root access using ADB.
+3. **Frida Server Check**:
+   - The script checks if the Frida server is already running by checking the default port (27042).
+   - If the Frida server is running, the script will list the PIDs of all Frida server processes.
+   - The user is then prompted to stop any running Frida server instances.
 
-### `download_frida_server(version, os_type, architecture)`
-- Downloads the specified Frida server binary from the official Frida GitHub releases.
+4. **Architecture Detection**:
+   - The script automatically detects the architecture of the connected device (e.g., `arm64`, `x86_64`, etc.).
+   
+5. **Frida Server Version Management**:
+   - The script prompts the user to enter the desired Frida version. It checks if the correct version of the Frida server is installed on the device.
+   - If not installed, the script downloads and installs the correct version.
 
-### `install_frida(version)`
-- Installs the specified version of Frida on the local machine using pip.
+6. **Starting the Frida Server**:
+   - The user is prompted to start the Frida server. If confirmed, the script starts the Frida server on the device and verifies if it is running successfully.
 
-### `install_frida_on_device(version, os_type, architecture)`
-- Installs the specified version of the Frida server on the connected Android device.
+### Example
 
-### `run_frida_server(frida_server_path)`
-- Starts the Frida server on the Android device with root privileges.
-
----
-
-## Logging
-
-All events, including errors, are logged to a file named `frida_script.log` in the script directory. You can use this log file to review what happened during the execution of the script.
-
----
+```bash
+[*] Checking if a device is connected...
+[+] Device connected and authorized.
+[*] Checking if the device is rooted...
+[+] Root access confirmed!
+[*] Checking if Frida is running on the default port...
+[+] Frida server is running on port 27042.
+[+] Found Frida server PIDs: 5028, 5029, 5042
+[*] Stopping all Frida server processes...
+[*] Frida server processes stopped.
+Enter the Frida version you want to use or install (e.g., 16.1.17): 16.0.1
+[*] Checking if Frida server is installed...
+[+] Frida server binary found.
+[*] Do you want to run the Frida server now? (y/n): y
+[*] Starting Frida server...
+[+] Frida server started successfully with PID 5826.
+```
 
 ## Troubleshooting
 
-1. **No device connected**:
-   - Ensure your Android device is connected via USB and is recognized by ADB. You can check this by running:
-     ```bash
-     adb devices
-     ```
+### Issue: Stuck on Starting Frida Server
+- Ensure that your device is rooted.
+- Check if **SELinux** is enforcing restrictive policies by temporarily disabling it:
+  ```bash
+  adb shell su -c "setenforce 0"
+  ```
 
-2. **Device not rooted**:
-   - Ensure your device has root access. The script cannot install or run Frida without root privileges on the device.
+### Issue: Frida Server Fails to Start
+- Check the logs using the following command:
+  ```bash
+  adb logcat | grep frida
+  ```
+- Ensure that the correct version of the Frida server is installed for the device architecture.
 
-3. **Frida server not running**:
-   - If you encounter issues starting the Frida server, ensure your device is rooted and that the correct architecture and version of the Frida server has been installed.
-
----
+### Issue: Permissions Error
+- Ensure that the Frida server binary has executable permissions:
+  ```bash
+  adb shell chmod 755 /data/local/tmp/frida-server-<version>-android-<arch>
+  ```
 
 ## License
 
-This project is licensed under the MIT License.
+This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
 
 ---
 
-### Contributions
-
-Contributions are welcome! Feel free to open an issue or submit a pull request if you have suggestions or improvements.
-
----
+Let me know if you need any modifications or additional information!
