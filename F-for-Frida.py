@@ -14,6 +14,8 @@ init(autoreset=True)
 # Logging configuration
 logging.basicConfig(filename='frida_script.log', level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
+FRIDA_PORT = 27042
+
 # Check if 'xz' is installed on the system
 def check_xz_installed():
     if which("xz") is None:
@@ -31,12 +33,22 @@ def check_device_connected():
     result = subprocess.run(["adb", "devices"], stdout=subprocess.PIPE)
     devices = result.stdout.decode('utf-8').splitlines()
     
-    if len(devices) > 1:
-        print(Fore.GREEN + "[+] Device connected.")
-        return True
-    else:
-        print(Fore.RED + "[-] No device connected. Please connect a device and try again.")
+    if len(devices) <= 1:  # No device connected
+        print(Fore.RED + "[-] No device connected. Please connect a device and enable USB Debugging.")
         return False
+
+    for device in devices[1:]:
+        if "unauthorized" in device:
+            print(Fore.RED + "[-] Device connected, but ADB authorization is not granted. Please authorize the device.")
+            return False
+        elif "device" not in device:
+            print(Fore.RED + "[-] Device connected, but USB Debugging is not enabled. Please enable USB Debugging.")
+            return False
+        else:
+            print(Fore.GREEN + "[+] Device connected and authorized.")
+            return True
+
+    return False
 
 # Function to check if the device is rooted using ADB
 def check_root():
@@ -54,13 +66,96 @@ def check_root():
         print(Fore.RED + "[-] Root check timed out. Ensure that the device is connected and ADB is enabled.")
         return False
 
-# Function to download the Frida server
-def download_frida_server(version, os_type, architecture):
-    url = f"https://github.com/frida/frida/releases/download/{version}/frida-server-{version}-{os_type}-{architecture}.xz"
-    local_filename = f"frida-server-{version}-{os_type}-{architecture}.xz"
-    
-    print(Fore.CYAN + f"[*] Downloading Frida server from: {url}")
-    
+# Function to check if Frida is running on the default port and get its PIDs
+def check_frida_running_on_port():
+    print(Fore.CYAN + "[*] Checking if Frida is running on the default port...")
+    try:
+        result = subprocess.run(["adb", "shell", f"netstat -tuln | grep {FRIDA_PORT}"], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        output = result.stdout.decode('utf-8').strip()
+
+        if output:
+            print(Fore.GREEN + f"[+] Frida server is running on port {FRIDA_PORT}.")
+            pid_result = subprocess.run(["adb", "shell", f"ps -Af | grep frida-server"], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+            pid_output = pid_result.stdout.decode('utf-8').strip()
+            
+            if pid_output:
+                # Extract PIDs from the output
+                pids = [line.split()[1] for line in pid_output.splitlines() if "frida-server" in line]
+                print(Fore.GREEN + f"[+] Found Frida server PIDs: {', '.join(pids)}")
+                return pids
+            else:
+                print(Fore.RED + "[-] No Frida server processes found.")
+                return None
+        else:
+            print(Fore.RED + f"[-] Frida server is not running on the default port ({FRIDA_PORT}).")
+            return None
+    except Exception as e:
+        print(Fore.RED + f"[-] Error checking Frida server port: {e}")
+        return None
+
+# Function to detect device architecture using adb
+def get_device_architecture():
+    print(Fore.CYAN + "[*] Detecting device architecture...")
+    try:
+        # Get the architecture from the device's properties
+        result = subprocess.run(["adb", "shell", "getprop", "ro.product.cpu.abi"], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        arch = result.stdout.decode('utf-8').strip()
+
+        # Map the architecture from the device to the format required for Frida
+        if arch in ["arm64-v8a", "arm64"]:
+            return "arm64"
+        elif arch in ["armeabi-v7a", "armeabi"]:
+            return "arm"
+        elif arch == "x86":
+            return "x86"
+        elif arch == "x86_64":
+            return "x86_64"
+        else:
+            print(Fore.RED + f"[-] Unknown architecture: {arch}")
+            return None
+    except subprocess.CalledProcessError as e:
+        print(Fore.RED + f"[-] Failed to detect architecture: {e}")
+        return None
+        
+# Function to stop all running Frida server PIDs with a single adb shell and su session
+def stop_all_frida_servers(pids):
+    print(Fore.CYAN + "[*] Stopping all Frida server processes...")
+
+    try:
+        # Step 1: Open ADB shell and gain SU privileges
+        print(Fore.CYAN + "[*] Gaining SU privileges in ADB shell...")
+        su_session = subprocess.Popen(["adb", "shell", "su"], stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+
+        # Check if SU privileges were obtained
+        su_session.stdin.write("id\n")
+        su_session.stdin.flush()
+        output = su_session.stdout.readline().strip()
+        if "uid=0(root)" not in output:
+            print(Fore.RED + "[-] Failed to get SU privileges. Please ensure the device is rooted.")
+            su_session.terminate()
+            return
+
+        # Step 2: Execute the kill command for each PID within the same session
+        for pid in pids:
+            print(Fore.CYAN + f"[*] Stopping Frida server with PID {pid}...")
+            su_session.stdin.write(f"kill -9 {pid}\n")
+            su_session.stdin.flush()
+        
+        su_session.stdin.write("exit\n")  # Close the SU session properly
+        su_session.stdin.flush()
+        su_session.wait()
+
+        print(Fore.GREEN + "[+] All Frida server processes stopped successfully.")
+
+    except Exception as e:
+        print(Fore.RED + f"[-] Error stopping Frida servers: {e}")
+
+# Function to download and install the Frida server on the device
+def download_and_install_frida_server(version, architecture):
+    print(Fore.CYAN + f"[*] Downloading and installing Frida server version {version} for {architecture}...")
+    url = f"https://github.com/frida/frida/releases/download/{version}/frida-server-{version}-android-{architecture}.xz"
+    local_filename = f"frida-server-{version}-android-{architecture}.xz"
+
     try:
         with requests.get(url, stream=True) as r:
             r.raise_for_status()
@@ -72,285 +167,123 @@ def download_frida_server(version, os_type, architecture):
                     t.update(len(data))
                     f.write(data)
             t.close()
-        print(Fore.GREEN + f"[+] Download complete: {local_filename}")
-        return local_filename
+
+        print(Fore.CYAN + f"[*] Extracting Frida server {version}...")
+        subprocess.run(['xz', '--decompress', '-f', local_filename])
+        
+        # Push to the device and set permissions
+        extracted_file = local_filename.rstrip(".xz")
+        subprocess.run(["adb", "push", extracted_file, f"/data/local/tmp/frida-server-{version}-android-{architecture}"])
+        subprocess.run(["adb", "shell", "chmod", "755", f"/data/local/tmp/frida-server-{version}-android-{architecture}"])
+        print(Fore.GREEN + f"[+] Frida server {version} installed on the device.")
+        return f"/data/local/tmp/frida-server-{version}-android-{architecture}"
+
     except requests.exceptions.HTTPError as err:
         print(Fore.RED + f"[-] Failed to download frida-server: {err}")
-        logging.error(f"Failed to download frida-server: {err}")
         return None
 
-# Function to extract the .xz file
-def extract_xz_file(file_path):
-    extracted_file = file_path.rstrip(".xz")
-    
-    if os.path.exists(extracted_file):
-        print(Fore.YELLOW + f"[!] {extracted_file} already exists. Overwriting it.")
-    
-    print(Fore.CYAN + f"[*] Extracting {file_path}...")
-    try:
-        subprocess.run(['xz', '--decompress', '-f', file_path], check=True)
-        print(Fore.GREEN + f"[+] Extraction complete!")
-        logging.info(f"Extracted: {file_path}")
-        return extracted_file
-    except subprocess.CalledProcessError as e:
-        print(Fore.RED + f"[-] Failed to extract {file_path}: {e}")
-        logging.error(f"Failed to extract {file_path}: {e}")
-        return None
-
-# Function to check if Frida is installed locally
-def check_frida_installed():
-    try:
-        result = subprocess.run(["frida", "--version"], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-        return result.stdout.decode("utf-8").strip()
-    except FileNotFoundError:
-        print(Fore.RED + "[-] Frida is not installed on your local machine.")
-        return None
-
-# Function to install Frida and Frida-tools locally
-def install_frida_and_tools(version):
-    print(Fore.CYAN + f"[*] Installing Frida {version} and frida-tools...")
-    for _ in tqdm(range(100), desc="Installing Frida"):
-        time.sleep(0.05)
-    subprocess.run([sys.executable, "-m", "pip", "install", f"frida=={version}"])
-    subprocess.run([sys.executable, "-m", "pip", "install", "frida-tools"])
-    print(Fore.GREEN + f"[+] Frida {version} and frida-tools successfully installed!")
-    logging.info(f"Frida {version} and frida-tools installed.")
-
-# Validate if the entered Frida version exists on PyPi
-def validate_frida_version(version):
-    try:
-        url = "https://pypi.org/pypi/frida/json"
-        response = requests.get(url)
-        available_versions = response.json()['releases'].keys()
-        if version in available_versions:
-            return True
-        else:
-            print(Fore.YELLOW + "[!] Invalid version. Available versions are:")
-            print(Fore.YELLOW + ", ".join(sorted(available_versions, reverse=True)[:5]))
-            return False
-    except requests.exceptions.RequestException as e:
-        print(Fore.RED + f"[-] Error checking Frida versions: {e}")
-        logging.error(f"Error checking Frida versions: {e}")
-        return False
-
-# Get device architecture
-def get_device_architecture():
-    print(Fore.CYAN + "[*] Detecting device architecture...")
-    try:
-        result = subprocess.run(["adb", "shell", "getprop", "ro.product.cpu.abi"], stdout=subprocess.PIPE, timeout=10)
-        arch = result.stdout.decode("utf-8").strip()
-
-        if arch in ["arm64-v8a", "arm64"]:
-            print(Fore.GREEN + f"[+] Device architecture: {arch} (arm64)")
-            return "arm64"
-        elif arch in ["armeabi-v7a", "armeabi"]:
-            print(Fore.GREEN + f"[+] Device architecture: {arch} (arm)")
-            return "arm"
-        elif arch in ["x86"]:
-            print(Fore.GREEN + f"[+] Device architecture: {arch} (x86)")
-            return "x86"
-        elif arch in ["x86_64"]:
-            print(Fore.GREEN + f"[+] Device architecture: {arch} (x86_64)")
-            return "x86_64"
-        else:
-            print(Fore.RED + f"[-] Unknown architecture: {arch}")
-            sys.exit(1)
-    except subprocess.TimeoutExpired:
-        print(Fore.RED + "[-] Device architecture detection timed out.")
-        sys.exit(1)
-
-# Check Frida version on the connected device using the frida-server binary
-def check_frida_version_on_device(frida_server_path):
-    try:
-        command = f"adb shell su -c '{frida_server_path} --version'"
-        result = subprocess.run(command, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-        stdout = result.stdout.decode("utf-8").strip()
-        if stdout:
-            print(Fore.GREEN + f"[+] Frida server version on device: {stdout}")
-            return stdout
-        else:
-            print(Fore.RED + "[-] Frida server is not running on the device.")
-            return None
-    except FileNotFoundError:
-        print(Fore.RED + "[-] Frida server binary not found on the device.")
-        return None
-
-# Function to check if the Frida server is running on the device
-def is_frida_server_running():
-    print(Fore.CYAN + "[*] Checking if Frida server is running on the device...")
-    try:
-        result = subprocess.run(["adb", "shell", "ps", "|", "grep", "frida-server"], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-        stdout = result.stdout.decode('utf-8').strip()
-        if "frida-server" in stdout:
-            print(Fore.GREEN + "[+] Frida server is running.")
-            logging.info("Frida server is running.")
-            return True
-        else:
-            print(Fore.RED + "[-] Frida server is not running.")
-            logging.warning("Frida server is not running.")
-            return False
-    except Exception as e:
-        print(Fore.RED + f"[-] Error checking Frida server status: {e}")
-        logging.error(f"Error checking Frida server status: {e}")
-        return False
-
-# Ensure Frida versions match between local machine and device
-def ensure_frida_version_compatibility(local_version, device_version):
-    if local_version == device_version:
-        print(Fore.GREEN + "[+] Frida versions match between the local machine and device.")
-        logging.info("Frida versions match.")
-        return True
-    else:
-        print(Fore.RED + f"[-] Version mismatch: Local Frida version {local_version} vs Device Frida version {device_version}.")
-        logging.warning(f"Version mismatch: Local Frida version {local_version} vs Device Frida version {device_version}.")
-        return False
-
-# Get the port that Frida is running on
-def get_frida_port():
-    try:
-        result = subprocess.run(["adb", "shell", "netstat", "-tuln"], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-        output = result.stdout.decode('utf-8').strip().splitlines()
-        for line in output:
-            if "frida" in line:
-                port_info = line.split()[3]  # Extract the port
-                port = port_info.split(':')[-1]
-                print(Fore.GREEN + f"[+] Frida server is running on port {port}.")
-                logging.info(f"Frida server is running on port {port}.")
-                return port
-        print(Fore.RED + "[-] Could not find the port Frida is running on.")
-        logging.warning("Could not find the port Frida is running on.")
-        return None
-    except Exception as e:
-        print(Fore.RED + f"[-] Error fetching Frida port: {e}")
-        logging.error(f"Error fetching Frida port: {e}")
-        return None
-
-# Install and run frida-server on a connected device based on the architecture
-def install_frida_on_device(version, os_type, architecture):
-    check_xz_installed()
-    
-    frida_server_path_on_device = f"/data/local/tmp/frida-server-{version}-android-{architecture}"
-    
-    device_frida_version = check_frida_version_on_device(frida_server_path_on_device)
-    
-    if device_frida_version:
-        if device_frida_version == version:
-            print(Fore.GREEN + f"[+] Frida version {version} is already installed and running on the device.")
-            return
-        else:
-            print(Fore.YELLOW + f"[!] Frida version {device_frida_version} found, but it is not the desired version {version}.")
-    else:
-        print(Fore.CYAN + f"[*] Frida server is not found on the device. Proceeding to install...")
-    
-    downloaded_file = download_frida_server(version, os_type, architecture)
-    if not downloaded_file:
-        print(Fore.RED + "[-] Download failed, unable to install frida-server.")
-        return
-    
-    extracted_file = extract_xz_file(downloaded_file)
-    if not extracted_file:
-        print(Fore.RED + "[-] Extraction failed, unable to install frida-server.")
-        return
-
-    subprocess.run(["adb", "push", extracted_file, frida_server_path_on_device])
-    subprocess.run(["adb", "shell", "chmod", "755", frida_server_path_on_device])
-    
-    print(Fore.GREEN + f"[+] Frida {version} installed on the device in {frida_server_path_on_device}.")
-    
-    run_frida_server(frida_server_path_on_device)
-
-# Run Frida server with root privileges, allowing user to specify a custom port
+# Function to run Frida server using nohup and check if it's running
 def run_frida_server(frida_server_path):
-    custom_port = None
-    use_custom_port = input(Fore.CYAN + "[*] Do you want to run Frida on a custom port? (y/n): ").strip().lower()
-    if use_custom_port == 'y':
-        custom_port = input(Fore.CYAN + "[*] Enter the custom port you want to run Frida on: ").strip()
-        command = f"adb shell su -c '{frida_server_path} -l 127.0.0.1:{custom_port} &'"
-    else:
-        command = f"adb shell su -c '{frida_server_path} &'"
-    
-    print(Fore.CYAN + f"[*] Starting Frida server at {frida_server_path} with root privileges...")
-    
+    print(Fore.CYAN + f"[*] Starting Frida server at {frida_server_path}...")
+
     try:
-        result = subprocess.run(command, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-        stdout = result.stdout.decode("utf-8").strip()
-        stderr = result.stderr.decode("utf-8").strip()
+        # Start Frida server in the background using nohup
+        start_command = f"adb shell nohup su -c '{frida_server_path}' >/dev/null 2>&1 &"
+        result = subprocess.run(start_command, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+
+        # Capture any stdout or stderr messages for diagnostics
+        stdout = result.stdout.strip()
+        stderr = result.stderr.strip()
 
         if stdout:
-            print(Fore.GREEN + "[+] Frida server started successfully.")
+            print(Fore.CYAN + f"[*] Frida server stdout: {stdout}")
         if stderr:
-            print(Fore.RED + f"[-] Error starting Frida server: {stderr}")
-        
-        # Check if the Frida server is running in a parallel session
-        if is_frida_server_running():
-            logging.info("Frida server is up and running.")
-        else:
-            logging.error("Failed to start Frida server.")
-        
-        # Display the port Frida is running on
-        if not custom_port:
-            get_frida_port()
-        else:
-            print(Fore.GREEN + f"[+] Frida server is running on custom port {custom_port}.")
-            logging.info(f"Frida server running on custom port {custom_port}.")
-    except subprocess.CalledProcessError as e:
-        print(Fore.RED + f"[-] Failed to start Frida server: {e}")
+            print(Fore.RED + f"[-] Frida server stderr: {stderr}")
 
-# Function to stop the Frida server
-def stop_frida_server(frida_server_path):
-    print(Fore.CYAN + "[*] Stopping Frida server...")
-    command = f"adb shell su -c 'killall frida-server'"
-    try:
-        subprocess.run(command, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-        print(Fore.GREEN + "[+] Frida server stopped successfully.")
-        logging.info("Frida server stopped successfully.")
-    except subprocess.CalledProcessError as e:
-        print(Fore.RED + f"[-] Failed to stop Frida server: {e}")
-        logging.error(f"Failed to stop Frida server: {e}")
+        # Wait for a few seconds to check if Frida starts successfully
+        time.sleep(3)
+
+        # Check if Frida server is running by looking for its process
+        print(Fore.CYAN + "[*] Checking if Frida server is running...")
+        check_command = "adb shell ps | grep frida-server"
+        check_result = subprocess.run(check_command, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+
+        if check_result.returncode == 0 and "frida-server" in check_result.stdout:
+            # Extract the PID
+            pid_line = check_result.stdout.strip().splitlines()[0]
+            pid = pid_line.split()[1]  # Assuming the PID is the second column
+            print(Fore.GREEN + f"[+] Frida server started successfully with PID: {pid}.")
+        else:
+            print(Fore.RED + "[-] Failed to start Frida server. No running process detected.")
+            # Check device logs for Frida-related issues
+            log_result = subprocess.run("adb logcat | grep frida", shell=True, stdout=subprocess.PIPE, text=True)
+            print(Fore.RED + "[-] Frida log output:")
+            print(log_result.stdout)
+
+    except Exception as e:
+        print(Fore.RED + f"[-] Error starting Frida server: {e}")
+
+# Function to check if a Frida server is installed on the device
+def check_frida_server_installed(version, architecture):
+    frida_server_path = f"/data/local/tmp/frida-server-{version}-android-{architecture}"
+    print(Fore.CYAN + f"[*] Checking if Frida server is installed at {frida_server_path}...")
+    
+    result = subprocess.run(["adb", "shell", "ls", frida_server_path], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    stdout = result.stdout.decode('utf-8').strip()
+    stderr = result.stderr.decode('utf-8').strip()
+    
+    if "No such file" in stderr:
+        print(Fore.RED + f"[-] Frida server binary not found at {frida_server_path}.")
+        return False
+    else:
+        print(Fore.GREEN + f"[+] Frida server binary found at {frida_server_path}.")
+        return frida_server_path
 
 # Main script logic
 def main():
     if not check_device_connected():
         return
-    
+
     if not check_root():
         return
-    
-    desired_version = input(Fore.CYAN + "[*] Enter the Frida version you want to use or install (e.g., 16.1.17): ")
-    
-    if not validate_frida_version(desired_version):
-        print(Fore.RED + "[-] Invalid Frida version. Exiting.")
-        return
-    
-    local_frida_version = check_frida_installed()
-    if local_frida_version:
-        print(Fore.GREEN + f"[+] Frida version {local_frida_version} is already installed on your machine.")
-    else:
-        install_frida_and_tools(desired_version)
 
-    device_arch = get_device_architecture()
+    # Check if Frida server is running on the default port and get its PIDs
+    frida_pids = check_frida_running_on_port()
     
-    install_frida_on_device(desired_version, "android", device_arch)
-
-    device_frida_version = check_frida_version_on_device(f"/data/local/tmp/frida-server-{desired_version}-android-{device_arch}")
-    
-    # Ensure Frida versions on the local machine and device match
-    if not ensure_frida_version_compatibility(local_frida_version, device_frida_version):
-        print(Fore.RED + "[-] Frida versions do not match. Please install matching versions to continue.")
+    # Detect architecture
+    architecture = get_device_architecture()
+    if not architecture:
+        print(Fore.RED + "[-] Could not detect device architecture. Exiting.")
         return
 
-    # Prompt user if they want to stop the Frida server
-    while True:
-        user_input = input(Fore.CYAN + "[*] Do you want to stop the Frida server? (y/n): ").strip().lower()
-        if user_input == 'y':
-            frida_server_path = f"/data/local/tmp/frida-server-{desired_version}-android-{device_arch}"
-            stop_frida_server(frida_server_path)
-            break
-        elif user_input == 'n':
-            print(Fore.GREEN + "[+] Exiting script while keeping Frida server running.")
-            break
+    print(Fore.GREEN + f"[+] Device architecture detected: {architecture}")
+    
+    # If Frida is running, ask the user if they want to stop all processes
+    if frida_pids:
+        stop_option = input(Fore.CYAN + f"[*] Do you want to stop all running Frida server processes? (y/n): ").strip().lower()
+        if stop_option == 'y':
+            stop_all_frida_servers(frida_pids)
+        elif stop_option == 'n':
+            print(Fore.GREEN + "[+] Keeping Frida server processes running.")
+            return
         else:
-            print(Fore.YELLOW + "[!] Invalid input. Please enter 'y' or 'n'.")
+            print(Fore.YELLOW + "[!] Invalid input. Exiting.")
+            return
+
+    # Prompt for Frida version and check if the server is installed on the device
+    desired_version = input(Fore.CYAN + "\nEnter the Frida version you want to use or install (e.g., 16.1.17): ")
+    frida_server_path = check_frida_server_installed(desired_version, architecture)
+
+    if not frida_server_path:
+        # Download and install the Frida server if not found
+        frida_server_path = download_and_install_frida_server(desired_version, architecture)
+
+    # If Frida server is found or installed, ask the user if they want to run it
+    run_option = input(Fore.CYAN + f"[*] Do you want to run the Frida server now? (y/n): ").strip().lower()
+    if run_option == 'y' and frida_server_path:
+        run_frida_server(frida_server_path)
+    else:
+        print(Fore.GREEN + "[+] Frida server run skipped.")
 
 if __name__ == "__main__":
     main()
