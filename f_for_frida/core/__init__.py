@@ -9,6 +9,14 @@ from .wireless import WirelessADB
 from .scripts import ScriptManager, FridaScript
 from .doctor import Doctor, CheckResult, CheckStatus
 from .hooker import AppHooker, AppInfo, HookMode
+from .compatibility import (
+    VersionChecker, 
+    Automator,
+    VersionStatus,
+    VersionInfo,
+    CompatibilityResult,
+    DeviceRecommendation,
+)
 
 __all__ = [
     "ADBClient",
@@ -23,4 +31,10 @@ __all__ = [
     "AppHooker",
     "AppInfo",
     "HookMode",
+    "VersionChecker",
+    "Automator",
+    "VersionStatus",
+    "VersionInfo",
+    "CompatibilityResult",
+    "DeviceRecommendation",
 ]

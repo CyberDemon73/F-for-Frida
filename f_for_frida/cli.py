@@ -21,6 +21,7 @@ from .core.wireless import WirelessADB
 from .core.scripts import ScriptManager, BUILTIN_SCRIPTS
 from .core.doctor import Doctor, CheckStatus
 from .core.hooker import AppHooker, HookMode
+from .core.compatibility import VersionChecker, Automator, VersionStatus
 from .utils.logger import setup_logging, get_logger
 from .utils.downloader import get_latest_frida_version, get_available_versions
 from .utils.config import get_config, get_config_manager
@@ -750,7 +751,9 @@ def hook_kill(package, device):
 
 @cli.command()
 @click.option('--device', '-s', help='Target device serial')
-def doctor(device):
+@click.option('--fix', '-f', is_flag=True, help='Automatically fix issues')
+@click.option('--detailed', '-d', is_flag=True, help='Show detailed information')
+def doctor(device, fix, detailed):
     """Diagnose common issues and check system health."""
     print_banner()
     console.print("[bold]Running health checks...[/bold]\n")
@@ -762,25 +765,318 @@ def doctor(device):
     for result in results:
         if result.status == CheckStatus.OK:
             icon = "[green]✓[/green]"
+            color = "green"
         elif result.status == CheckStatus.WARNING:
             icon = "[yellow]![/yellow]"
+            color = "yellow"
         elif result.status == CheckStatus.ERROR:
             icon = "[red]✗[/red]"
+            color = "red"
         else:
             icon = "[dim]○[/dim]"
+            color = "dim"
         
-        console.print(f"  {icon} [bold]{result.name}:[/bold] {result.message}")
+        # Show fixable indicator
+        fix_indicator = " [cyan](fixable)[/cyan]" if result.can_fix else ""
+        console.print(f"  {icon} [bold]{result.name}:[/bold] {result.message}{fix_indicator}")
+        
+        # Show details if requested
+        if detailed and result.details:
+            for line in result.details.split('\n'):
+                console.print(f"      [dim]{line}[/dim]")
     
     # Summary
     ok, warning, error, skipped = doc.get_summary()
     console.print(f"\n[bold]Summary:[/bold] {ok} passed, {warning} warnings, {error} errors, {skipped} skipped")
     
-    # Show fixes if needed
+    # Get fixable issues
+    fixable = doc.get_fixable_issues()
+    
+    # Show fixes
     fixes = doc.get_fixes()
     if fixes:
         console.print("\n[bold yellow]Suggested Fixes:[/bold yellow]")
-        for name, fix in fixes:
-            console.print(f"  • [cyan]{name}:[/cyan] {fix}")
+        for name, fix_cmd in fixes:
+            console.print(f"  • [cyan]{name}:[/cyan] {fix_cmd}")
+    
+    # Auto-fix or ask to fix
+    if fixable:
+        console.print(f"\n[bold cyan]{len(fixable)} issue(s) can be fixed automatically[/bold cyan]")
+        
+        if fix:
+            # Apply all fixes
+            console.print("\n[bold]Applying fixes...[/bold]")
+            for issue in fixable:
+                with console.status(f"Fixing {issue.name}..."):
+                    success, msg = doc.apply_fix(issue)
+                if success:
+                    print_success(msg)
+                else:
+                    print_error(msg)
+        else:
+            # Ask to fix
+            if click.confirm("\nWould you like to fix these issues automatically?", default=False):
+                console.print()
+                for issue in fixable:
+                    if click.confirm(f"  Fix '{issue.name}'?", default=True):
+                        with console.status(f"Fixing {issue.name}..."):
+                            success, msg = doc.apply_fix(issue)
+                        if success:
+                            print_success(msg)
+                        else:
+                            print_error(msg)
+
+
+# ============================================
+# Automate Command
+# ============================================
+
+@cli.command()
+@click.option('--device', '-s', help='Target device serial')
+@click.option('--yes', '-y', is_flag=True, help='Auto-confirm all actions')
+@click.option('--version', '-v', 'frida_version', help='Specific Frida version to install')
+def automate(device, yes, frida_version):
+    """
+    Automatically setup Frida based on device information.
+    
+    Analyzes your device, checks compatibility, and configures everything
+    automatically with the best Frida version for your Android device.
+    """
+    print_banner()
+    
+    # Select device
+    dm = DeviceManager()
+    serial = dm.select_device(device)
+    
+    if not serial:
+        devices_list = dm.get_authorized_devices()
+        if not devices_list:
+            print_error("No authorized devices found")
+            return
+        
+        if len(devices_list) > 1:
+            console.print("\n[bold]Select a device:[/bold]")
+            for i, d in enumerate(devices_list, 1):
+                console.print(f"  {i}. {d.serial} ({d.model or 'Unknown'})")
+            
+            choice = click.prompt("Device number", type=int, default=1)
+            if 0 < choice <= len(devices_list):
+                serial = devices_list[choice - 1].serial
+            else:
+                print_error("Invalid selection")
+                return
+        else:
+            serial = devices_list[0].serial
+    
+    print_success(f"Selected device: {serial}")
+    
+    # Create automator
+    automator = Automator(device_serial=serial)
+    
+    # Analyze
+    console.print("\n[bold]Analyzing device and setup...[/bold]\n")
+    
+    with console.status("Gathering information..."):
+        analysis = automator.analyze()
+    
+    # Display device info
+    device_info = analysis.get("device", {})
+    if device_info:
+        from .core.compatibility import get_android_codename
+        android_ver = device_info.get("android_version", 0)
+        codename = get_android_codename(android_ver)
+        
+        device_panel = (
+            f"[bold]Model:[/bold] {device_info.get('device_model', 'Unknown')}\n"
+            f"[bold]Manufacturer:[/bold] {device_info.get('manufacturer', 'Unknown')}\n"
+            f"[bold]Android:[/bold] {android_ver} ({codename})\n"
+            f"[bold]SDK:[/bold] {device_info.get('sdk_version', 'Unknown')}\n"
+            f"[bold]Architecture:[/bold] {device_info.get('frida_arch', 'Unknown')}\n"
+            f"[bold]Security Patch:[/bold] {device_info.get('security_patch', 'Unknown')}"
+        )
+        console.print(Panel(device_panel, title="Device Information", border_style="cyan"))
+    
+    # Display current versions
+    versions = analysis.get("versions", {})
+    version_table = Table(title="Current Versions", box=box.SIMPLE)
+    version_table.add_column("Component", style="cyan")
+    version_table.add_column("Version", style="yellow")
+    version_table.add_column("Status", style="green")
+    
+    for name, info in versions.items():
+        if info.installed:
+            version_table.add_row(info.component, info.version or "Unknown", "[green]Installed[/green]")
+        else:
+            version_table.add_row(info.component, "-", "[red]Not Installed[/red]")
+    
+    console.print(version_table)
+    
+    # Display recommendation
+    rec = analysis.get("recommendation")
+    if rec:
+        console.print(f"\n[bold]Recommended Frida Version:[/bold] [green]{rec.recommended_frida_version}[/green]")
+        if rec.notes:
+            for note in rec.notes:
+                console.print(f"  [dim]• {note}[/dim]")
+    
+    # Check compatibility
+    compat = analysis.get("compatibility")
+    if compat:
+        if compat.status == VersionStatus.MATCH:
+            console.print(f"\n[green]✓ Version Compatibility:[/green] {compat.message}")
+        elif compat.status == VersionStatus.COMPATIBLE:
+            console.print(f"\n[green]✓ Version Compatibility:[/green] {compat.message}")
+        elif compat.status == VersionStatus.MISMATCH:
+            console.print(f"\n[red]✗ Version Compatibility:[/red] {compat.message}")
+        else:
+            console.print(f"\n[yellow]! Version Compatibility:[/yellow] {compat.message}")
+    
+    # Display issues and actions
+    issues = analysis.get("issues", [])
+    actions = analysis.get("actions", [])
+    
+    if issues:
+        console.print("\n[bold yellow]Issues Detected:[/bold yellow]")
+        for issue in issues:
+            console.print(f"  [yellow]![/yellow] {issue}")
+    
+    if actions:
+        console.print("\n[bold cyan]Required Actions:[/bold cyan]")
+        for i, action in enumerate(actions, 1):
+            console.print(f"  {i}. {action['description']}")
+            console.print(f"     [dim]{action['command']}[/dim]")
+    
+    # Ask to proceed
+    if not actions:
+        console.print("\n[green]✓ Everything looks good! No actions needed.[/green]")
+        
+        # Check if server is running
+        if not analysis["server_status"]["running"]:
+            if yes or click.confirm("\nFrida server is installed but not running. Start it?", default=True):
+                fm = FridaManager(device_serial=serial)
+                installed = fm.list_installed_servers()
+                if installed:
+                    success, pid = fm.start_server(installed[0])
+                    if success:
+                        print_success(f"Frida server started (PID: {pid})")
+                    else:
+                        print_error("Failed to start Frida server")
+        return
+    
+    # Confirm actions
+    if not yes:
+        if not click.confirm("\nProceed with automated setup?", default=True):
+            print_info("Cancelled")
+            return
+    
+    # Override version if specified
+    if frida_version and rec:
+        rec.recommended_frida_version = frida_version
+        console.print(f"\n[cyan]Using specified version: {frida_version}[/cyan]")
+    
+    # Execute automation
+    console.print("\n[bold]Running automated setup...[/bold]\n")
+    
+    results = automator.run(fix_issues=True)
+    
+    # Display results
+    for action_result in results.get("actions_taken", []):
+        if action_result["success"]:
+            print_success(f"{action_result['description']}: {action_result['message']}")
+        else:
+            print_error(f"{action_result['description']}: {action_result['message']}")
+    
+    # Final status
+    console.print()
+    final = results.get("final_status", {})
+    if final.get("running"):
+        print_success("Frida server is running!")
+        console.print(f"\n[bold green]✓ Automation complete![/bold green]")
+        console.print("\n[dim]You can now use Frida to hook applications:[/dim]")
+        console.print("  frida -U -f com.example.app")
+        console.print("  f4f hook run com.example.app --spawn")
+    else:
+        if results["success"]:
+            print_warning("Setup complete but server not running. Start with: f4f start")
+        else:
+            print_error("Some issues could not be resolved automatically")
+
+
+@cli.command()
+@click.option('--device', '-s', help='Target device serial')
+def check_versions(device):
+    """Check Frida version compatibility across all components."""
+    dm = DeviceManager()
+    serial = dm.select_device(device)
+    
+    if not serial:
+        print_error("No authorized device found")
+        return
+    
+    print_info(f"Checking versions on device: {serial}")
+    
+    checker = VersionChecker(device_serial=serial)
+    
+    # Get all versions
+    versions = checker.get_all_versions()
+    
+    # Display versions
+    table = Table(title="Frida Version Information", box=box.ROUNDED)
+    table.add_column("Component", style="cyan")
+    table.add_column("Version", style="yellow")
+    table.add_column("Location", style="dim")
+    
+    client = versions["client"]
+    tools = versions["tools"]
+    server = versions["server"]
+    
+    table.add_row(
+        client.component,
+        client.version if client.installed else "[red]Not installed[/red]",
+        "Host (Python)"
+    )
+    table.add_row(
+        tools.component,
+        tools.version if tools.installed else "[red]Not installed[/red]",
+        "Host (CLI)"
+    )
+    table.add_row(
+        server.component,
+        server.version if server.installed else "[red]Not installed[/red]",
+        "Device"
+    )
+    
+    console.print(table)
+    
+    # Check compatibility
+    compat = checker.check_compatibility()
+    
+    if compat.status == VersionStatus.MATCH:
+        print_success(f"All versions match: {compat.client_version}")
+    elif compat.status == VersionStatus.COMPATIBLE:
+        print_success(compat.message)
+    elif compat.status == VersionStatus.MISMATCH:
+        print_error(compat.message)
+        console.print(f"\n[bold]Fix command:[/bold] {compat.fix_command}")
+        
+        if click.confirm("\nFix version mismatch now?", default=True):
+            success, msg = checker.fix_version_mismatch()
+            if success:
+                print_success(msg)
+            else:
+                print_error(msg)
+    else:
+        print_warning(compat.message)
+        if compat.fix_command:
+            console.print(f"\n[bold]Fix command:[/bold] {compat.fix_command}")
+    
+    # Show recommendation
+    rec = checker.get_recommended_version()
+    if rec:
+        console.print(f"\n[bold]Device Recommendation:[/bold]")
+        console.print(f"  Android {rec.android_version} ({rec.android_codename})")
+        console.print(f"  Recommended Frida: [green]{rec.recommended_frida_version}[/green]")
+        console.print(f"  Minimum Frida: {rec.min_frida_version}")
 
 
 # ============================================
