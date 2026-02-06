@@ -32,14 +32,34 @@ logger = get_logger(__name__)
 
 def print_banner():
     """Display application banner."""
-    banner = """
-╔═══════════════════════════════════════════════════════════╗
-║                    [bold cyan]F-for-Frida[/bold cyan]                          ║
-║         [dim]Automated Frida Server Management[/dim]              ║
-║                    [dim]v{version}[/dim]                              ║
-╚═══════════════════════════════════════════════════════════╝
-    """.format(version=__version__)
-    console.print(banner)
+    # ASCII art logo
+    logo = """
+[bold cyan]
+    ███████╗   ███████╗ ██████╗ ██████╗     ███████╗██████╗ ██╗██████╗  █████╗ 
+    ██╔════╝   ██╔════╝██╔═══██╗██╔══██╗    ██╔════╝██╔══██╗██║██╔══██╗██╔══██╗
+    █████╗     █████╗  ██║   ██║██████╔╝    █████╗  ██████╔╝██║██║  ██║███████║
+    ██╔══╝     ██╔══╝  ██║   ██║██╔══██╗    ██╔══╝  ██╔══██╗██║██║  ██║██╔══██║
+    ██║        ██║     ╚██████╔╝██║  ██║    ██║     ██║  ██║██║██████╔╝██║  ██║
+    ╚═╝        ╚═╝      ╚═════╝ ╚═╝  ╚═╝    ╚═╝     ╚═╝  ╚═╝╚═╝╚═════╝ ╚═╝  ╚═╝
+[/bold cyan]"""
+    
+    console.print(logo)
+    
+    # Info panel
+    info_text = (
+        f"[bold white]Automated Frida Server Management for Android[/bold white]\n"
+        f"[dim]━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━[/dim]\n"
+        f"[cyan]Version:[/cyan] [bold green]{__version__}[/bold green]  "
+        f"[cyan]Author:[/cyan] [yellow]Mohamed Hisham Sharaf[/yellow]\n"
+        f"[dim]GitHub: github.com/CyberDemon73/F-for-Frida[/dim]"
+    )
+    
+    console.print(Panel(
+        info_text,
+        border_style="cyan",
+        padding=(0, 2),
+    ))
+    console.print()
 
 
 def print_success(message: str):
