@@ -17,8 +17,13 @@ from . import __version__
 from .core.device import DeviceManager
 from .core.frida_manager import FridaManager
 from .core.adb import ADBClient
+from .core.wireless import WirelessADB
+from .core.scripts import ScriptManager, BUILTIN_SCRIPTS
+from .core.doctor import Doctor, CheckStatus
+from .core.hooker import AppHooker, HookMode
 from .utils.logger import setup_logging, get_logger
 from .utils.downloader import get_latest_frida_version, get_available_versions
+from .utils.config import get_config, get_config_manager
 
 # Initialize Rich console
 console = Console()
@@ -86,6 +91,10 @@ def cli(ctx, version, verbose, log_file):
         console.print(ctx.get_help())
 
 
+# ============================================
+# Device Commands
+# ============================================
+
 @cli.command()
 @click.option('--detailed', '-d', is_flag=True, help='Show detailed device information')
 def devices(detailed):
@@ -135,6 +144,107 @@ def devices(detailed):
     
     console.print(table)
 
+
+# ============================================
+# Wireless ADB Commands
+# ============================================
+
+@cli.group()
+def wireless():
+    """Wireless ADB connection management."""
+    pass
+
+
+@wireless.command("connect")
+@click.argument('address')
+def wireless_connect(address):
+    """Connect to a device over WiFi (IP:PORT or just IP)."""
+    w = WirelessADB()
+    
+    print_info(f"Connecting to {address}...")
+    success, message = w.connect(address)
+    
+    if success:
+        print_success(message)
+    else:
+        print_error(message)
+
+
+@wireless.command("disconnect")
+@click.argument('address', required=False)
+def wireless_disconnect(address):
+    """Disconnect from wireless device(s)."""
+    w = WirelessADB()
+    
+    if address:
+        print_info(f"Disconnecting from {address}...")
+    else:
+        print_info("Disconnecting all wireless devices...")
+    
+    success, message = w.disconnect(address)
+    
+    if success:
+        print_success(message)
+    else:
+        print_error(message)
+
+
+@wireless.command("setup")
+@click.option('--device', '-s', help='USB device serial')
+@click.option('--port', '-p', default=5555, help='TCP port for ADB')
+def wireless_setup(device, port):
+    """Setup wireless ADB on a USB-connected device."""
+    w = WirelessADB()
+    
+    print_info("Setting up wireless ADB...")
+    success, message = w.setup_wireless(device, port)
+    
+    if success:
+        print_success(message)
+    else:
+        print_error(message)
+
+
+@wireless.command("pair")
+@click.argument('address')
+@click.argument('code')
+def wireless_pair(address, code):
+    """Pair with device using wireless debugging (Android 11+)."""
+    w = WirelessADB()
+    
+    print_info(f"Pairing with {address}...")
+    success, message = w.pair(address, code)
+    
+    if success:
+        print_success(message)
+    else:
+        print_error(message)
+
+
+@wireless.command("list")
+def wireless_list():
+    """List wireless devices (connected and saved)."""
+    w = WirelessADB()
+    devices = w.get_wireless_devices()
+    
+    if not devices:
+        print_warning("No wireless devices")
+        return
+    
+    table = Table(title="Wireless Devices", box=box.SIMPLE)
+    table.add_column("Address", style="cyan")
+    table.add_column("Status", style="green")
+    
+    for d in devices:
+        status = "[green]Connected[/green]" if d.connected else "[dim]Saved[/dim]"
+        table.add_row(d.address, status)
+    
+    console.print(table)
+
+
+# ============================================
+# Frida Server Commands
+# ============================================
 
 @cli.command()
 @click.option('--device', '-s', help='Target device serial (required if multiple devices)')
@@ -407,6 +517,313 @@ def versions(limit):
     console.print(table)
 
 
+# ============================================
+# Scripts Commands
+# ============================================
+
+@cli.group()
+def scripts():
+    """Frida scripts management."""
+    pass
+
+
+@scripts.command("list")
+@click.option('--category', '-c', help='Filter by category')
+def scripts_list(category):
+    """List available Frida scripts."""
+    sm = ScriptManager()
+    
+    # Built-in scripts
+    table = Table(title="Built-in Scripts", box=box.SIMPLE)
+    table.add_column("Name", style="cyan")
+    table.add_column("Category", style="yellow")
+    table.add_column("Description", style="dim")
+    
+    for name, script in BUILTIN_SCRIPTS.items():
+        if category and script.category != category:
+            continue
+        table.add_row(name, script.category, script.description)
+    
+    console.print(table)
+    
+    # Custom scripts
+    custom = sm.list_custom()
+    if custom:
+        console.print("\n[bold]Custom Scripts:[/bold]")
+        for path in custom:
+            console.print(f"  • {path.name}")
+    
+    # Show categories
+    categories = sm.get_categories()
+    console.print(f"\n[dim]Categories: {', '.join(categories)}[/dim]")
+
+
+@scripts.command("show")
+@click.argument('name')
+def scripts_show(name):
+    """Show script content."""
+    sm = ScriptManager()
+    script = sm.get_builtin(name)
+    
+    if script:
+        console.print(Panel(
+            script.content,
+            title=f"[cyan]{script.name}[/cyan] - {script.description}",
+            border_style="dim"
+        ))
+    else:
+        content = sm.get_custom(name)
+        if content:
+            console.print(Panel(content, title=name, border_style="dim"))
+        else:
+            print_error(f"Script '{name}' not found")
+
+
+@scripts.command("export")
+@click.argument('name')
+@click.option('--output', '-o', help='Output file path')
+def scripts_export(name, output):
+    """Export a script to file."""
+    sm = ScriptManager()
+    path = sm.export_builtin(name, output)
+    
+    if path:
+        print_success(f"Script exported to: {path}")
+    else:
+        print_error(f"Script '{name}' not found")
+
+
+# ============================================
+# Hook Commands
+# ============================================
+
+@cli.group()
+def hook():
+    """Application hooking helpers."""
+    pass
+
+
+@hook.command("apps")
+@click.option('--device', '-s', help='Target device serial')
+@click.option('--filter', '-f', 'filter_term', help='Filter packages')
+@click.option('--running', '-r', is_flag=True, help='Show only running apps')
+def hook_apps(device, filter_term, running):
+    """List installed/running applications."""
+    dm = DeviceManager()
+    serial = dm.select_device(device)
+    
+    if not serial:
+        print_error("No authorized device found")
+        return
+    
+    hooker = AppHooker(device_serial=serial)
+    
+    if running:
+        apps = hooker.get_running_apps()
+        table = Table(title="Running Applications", box=box.SIMPLE)
+        table.add_column("Package", style="cyan")
+        table.add_column("PID", style="yellow")
+        
+        for app in apps:
+            table.add_row(app.package_name, str(app.pid))
+    else:
+        packages = hooker.list_packages(filter_term)
+        table = Table(title="Installed Applications", box=box.SIMPLE)
+        table.add_column("#", style="dim")
+        table.add_column("Package", style="cyan")
+        
+        for i, pkg in enumerate(packages[:50], 1):  # Limit to 50
+            table.add_row(str(i), pkg)
+        
+        if len(packages) > 50:
+            console.print(f"\n[dim]...and {len(packages) - 50} more[/dim]")
+    
+    console.print(table)
+
+
+@hook.command("run")
+@click.argument('package')
+@click.option('--device', '-s', help='Target device serial')
+@click.option('--script', help='Script name or path')
+@click.option('--spawn', is_flag=True, help='Spawn new process instead of attach')
+@click.option('--bypass', '-b', multiple=True, type=click.Choice(['ssl', 'root', 'debug']), 
+              help='Enable bypass (can use multiple)')
+def hook_run(package, device, script, spawn, bypass):
+    """Hook an application with Frida."""
+    dm = DeviceManager()
+    serial = dm.select_device(device)
+    
+    if not serial:
+        print_error("No authorized device found")
+        return
+    
+    hooker = AppHooker(device_serial=serial)
+    mode = HookMode.SPAWN if spawn else HookMode.ATTACH
+    
+    if bypass:
+        # Use quick bypass
+        success, result = hooker.quick_bypass(
+            package,
+            ssl_bypass='ssl' in bypass,
+            root_bypass='root' in bypass,
+            debug_bypass='debug' in bypass,
+            mode=mode
+        )
+    elif script:
+        success, result = hooker.hook_app(package, script_name=script, mode=mode)
+    else:
+        success, result = hooker.hook_app(package, mode=mode)
+    
+    if success:
+        print_success("Ready to hook!")
+        console.print(f"\n[bold]Run this command:[/bold]")
+        console.print(Panel(result, border_style="green"))
+    else:
+        print_error(result)
+
+
+@hook.command("start")
+@click.argument('package')
+@click.option('--device', '-s', help='Target device serial')
+def hook_start(package, device):
+    """Start an application."""
+    dm = DeviceManager()
+    serial = dm.select_device(device)
+    
+    if not serial:
+        print_error("No authorized device found")
+        return
+    
+    hooker = AppHooker(device_serial=serial)
+    
+    print_info(f"Starting {package}...")
+    if hooker.start_app(package):
+        print_success("Application started")
+    else:
+        print_error("Failed to start application")
+
+
+@hook.command("kill")
+@click.argument('package')
+@click.option('--device', '-s', help='Target device serial')
+def hook_kill(package, device):
+    """Force stop an application."""
+    dm = DeviceManager()
+    serial = dm.select_device(device)
+    
+    if not serial:
+        print_error("No authorized device found")
+        return
+    
+    hooker = AppHooker(device_serial=serial)
+    
+    print_info(f"Stopping {package}...")
+    if hooker.stop_app(package):
+        print_success("Application stopped")
+    else:
+        print_error("Failed to stop application")
+
+
+# ============================================
+# Doctor Command
+# ============================================
+
+@cli.command()
+@click.option('--device', '-s', help='Target device serial')
+def doctor(device):
+    """Diagnose common issues and check system health."""
+    print_banner()
+    console.print("[bold]Running health checks...[/bold]\n")
+    
+    doc = Doctor(device_serial=device)
+    results = doc.run_all_checks()
+    
+    # Display results
+    for result in results:
+        if result.status == CheckStatus.OK:
+            icon = "[green]✓[/green]"
+        elif result.status == CheckStatus.WARNING:
+            icon = "[yellow]![/yellow]"
+        elif result.status == CheckStatus.ERROR:
+            icon = "[red]✗[/red]"
+        else:
+            icon = "[dim]○[/dim]"
+        
+        console.print(f"  {icon} [bold]{result.name}:[/bold] {result.message}")
+    
+    # Summary
+    ok, warning, error, skipped = doc.get_summary()
+    console.print(f"\n[bold]Summary:[/bold] {ok} passed, {warning} warnings, {error} errors, {skipped} skipped")
+    
+    # Show fixes if needed
+    fixes = doc.get_fixes()
+    if fixes:
+        console.print("\n[bold yellow]Suggested Fixes:[/bold yellow]")
+        for name, fix in fixes:
+            console.print(f"  • [cyan]{name}:[/cyan] {fix}")
+
+
+# ============================================
+# Config Commands
+# ============================================
+
+@cli.group()
+def config():
+    """Configuration management."""
+    pass
+
+
+@config.command("show")
+def config_show():
+    """Show current configuration."""
+    cfg = get_config()
+    
+    table = Table(title="Configuration", box=box.SIMPLE)
+    table.add_column("Setting", style="cyan")
+    table.add_column("Value", style="yellow")
+    
+    for key, value in cfg.to_dict().items():
+        table.add_row(key, str(value) if value is not None else "[dim]not set[/dim]")
+    
+    console.print(table)
+
+
+@config.command("set")
+@click.argument('key')
+@click.argument('value')
+def config_set(key, value):
+    """Set a configuration value."""
+    cm = get_config_manager()
+    
+    # Handle boolean values
+    if value.lower() in ('true', 'yes', '1'):
+        value = True
+    elif value.lower() in ('false', 'no', '0'):
+        value = False
+    elif value.isdigit():
+        value = int(value)
+    
+    if cm.set(key, value):
+        print_success(f"Set {key} = {value}")
+    else:
+        print_error(f"Unknown configuration key: {key}")
+
+
+@config.command("init")
+def config_init():
+    """Initialize configuration file."""
+    cm = get_config_manager()
+    
+    if cm.save():
+        print_success(f"Configuration file created")
+    else:
+        print_error("Failed to create configuration file")
+
+
+# ============================================
+# Interactive Mode
+# ============================================
+
 @cli.command()
 @click.option('--device', '-s', help='Target device serial')
 def interactive(device):
@@ -453,6 +870,8 @@ def interactive(device):
         console.print("  4. Stop Frida server")
         console.print("  5. Restart Frida server")
         console.print("  6. List installed servers")
+        console.print("  7. Run health check")
+        console.print("  8. List applications")
         console.print("  0. Exit")
         
         choice = click.prompt("\nSelect action", type=int, default=0)
@@ -507,6 +926,18 @@ def interactive(device):
                     console.print(f"  • {s}")
             else:
                 print_warning("No servers installed")
+        elif choice == 7:
+            doc = Doctor(device_serial=serial)
+            results = doc.run_all_checks()
+            for r in results:
+                icon = {"ok": "✓", "warning": "!", "error": "✗", "skipped": "○"}[r.status.value]
+                console.print(f"  {icon} {r.name}: {r.message}")
+        elif choice == 8:
+            hooker = AppHooker(device_serial=serial)
+            apps = hooker.get_running_apps()
+            console.print("\n[bold]Running Applications:[/bold]")
+            for app in apps[:20]:
+                console.print(f"  • {app.package_name} (PID: {app.pid})")
 
 
 def main():

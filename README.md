@@ -13,7 +13,8 @@
   <a href="#installation">Installation</a> •
   <a href="#usage">Usage</a> •
   <a href="#commands">Commands</a> •
-  <a href="#multi-device">Multi-Device</a> •
+  <a href="#scripts">Scripts</a> •
+  <a href="#wireless">Wireless</a> •
   <a href="#contributing">Contributing</a>
 </p>
 
@@ -22,6 +23,7 @@
   <img src="https://img.shields.io/badge/license-MIT-green.svg" alt="License: MIT"/>
   <img src="https://img.shields.io/badge/platform-Windows%20%7C%20Linux%20%7C%20macOS-lightgrey.svg" alt="Platform"/>
   <img src="https://img.shields.io/badge/frida-supported-orange.svg" alt="Frida"/>
+  <img src="https://github.com/CyberDemon73/F-for-Frida/actions/workflows/ci.yml/badge.svg" alt="CI"/>
 </p>
 
 ---
@@ -34,8 +36,11 @@
 
 - 🚀 **One-command setup** - Get Frida running in seconds
 - 📱 **Multi-device support** - Manage multiple Android devices simultaneously
+- 🌐 **Wireless ADB** - Connect to devices over WiFi
+- 📜 **Built-in scripts** - SSL pinning bypass, root detection bypass, and more
 - 🔄 **Auto-architecture detection** - Automatically detects ARM64, ARM, x86, or x86_64
 - 📦 **Version management** - Install any Frida version with ease
+- 🩺 **Health diagnostics** - Built-in doctor command for troubleshooting
 - 🎨 **Beautiful CLI** - Rich terminal interface with colors and progress indicators
 
 ---
@@ -45,13 +50,15 @@
 | Feature | Description |
 |---------|-------------|
 | **Device Detection** | Auto-detect connected devices and their authorization status |
+| **Wireless ADB** | Connect, pair, and manage devices over WiFi |
 | **Root Verification** | Validate root access before Frida operations |
 | **Architecture Detection** | Auto-detect CPU architecture for correct binary download |
 | **Version Management** | Install specific or latest Frida server versions |
+| **Built-in Scripts** | SSL bypass, root bypass, anti-debug, crypto logger, and more |
+| **App Hooking** | Simplified interface for hooking applications |
 | **Process Management** | Start, stop, restart Frida server with PID tracking |
-| **Multi-Device Support** | Target specific devices in multi-device setups |
-| **Interactive Mode** | User-friendly menu-driven interface |
-| **Logging** | Comprehensive logging for debugging |
+| **Health Diagnostics** | Doctor command to diagnose common issues |
+| **Configuration** | YAML/JSON config files with environment variable support |
 
 ---
 
@@ -110,6 +117,9 @@ python main.py
 ### Quick Start
 
 ```bash
+# Check system health
+f4f doctor
+
 # List connected devices
 f4f devices
 
@@ -131,45 +141,40 @@ For a guided experience, use interactive mode:
 f4f interactive
 ```
 
-This provides a menu-driven interface for all operations.
-
 ---
 
 ## 📚 Commands
 
-### `devices` - List Connected Devices
+### Device Management
 
 ```bash
-# Basic device list
+# List all devices
 f4f devices
 
-# Detailed info (architecture, root status, Android version)
+# Detailed device info
 f4f devices --detailed
+
+# Check Frida status
+f4f status -s DEVICE_SERIAL
 ```
 
-**Output:**
-```
-┌──────────────────────────────────────────────────┐
-│                Connected Devices                  │
-├──────────────┬──────────┬────────────────────────┤
-│ Serial       │ Status   │ Model                  │
-├──────────────┼──────────┼────────────────────────┤
-│ RF8M33XXXXX  │ device   │ SM-G998B               │
-│ emulator-5554│ device   │ Android SDK built...   │
-└──────────────┴──────────┴────────────────────────┘
-```
-
-### `status` - Check Frida Server Status
+### Wireless ADB
 
 ```bash
-# Check on default/only device
-f4f status
+# Setup wireless on USB-connected device
+f4f wireless setup
 
-# Check specific device
-f4f status -s RF8M33XXXXX
+# Connect to device over WiFi
+f4f wireless connect 192.168.1.100
+
+# Pair with Android 11+ device
+f4f wireless pair 192.168.1.100:37123 123456
+
+# Disconnect
+f4f wireless disconnect
 ```
 
-### `install` - Install Frida Server
+### Frida Server Management
 
 ```bash
 # Install latest version
@@ -178,72 +183,189 @@ f4f install --latest
 # Install specific version
 f4f install 16.1.17
 
-# Force reinstall
-f4f install 16.1.17 --force
-
-# Install on specific device
-f4f install --latest -s RF8M33XXXXX
-```
-
-### `start` - Start Frida Server
-
-```bash
 # Start server
 f4f start
 
-# Start specific version
-f4f start 16.1.17
-
-# Start on specific device
-f4f start -s RF8M33XXXXX
-```
-
-### `stop` - Stop Frida Server
-
-```bash
-# Stop all instances
+# Stop server
 f4f stop
 
-# Stop specific PID
-f4f stop --pid 12345
-
-# Stop on specific device
-f4f stop -s RF8M33XXXXX
-```
-
-### `restart` - Restart Frida Server
-
-```bash
+# Restart server
 f4f restart
+
+# List available versions
+f4f versions
 ```
 
-### `versions` - List Available Versions
+### Built-in Scripts
 
 ```bash
-# Show 10 latest versions
-f4f versions
+# List available scripts
+f4f scripts list
 
-# Show more versions
-f4f versions --limit 20
+# Show script content
+f4f scripts show ssl-pinning-bypass
+
+# Export script to file
+f4f scripts export ssl-pinning-bypass -o bypass.js
+```
+
+Available scripts:
+- `ssl-pinning-bypass` - Bypass SSL certificate pinning
+- `root-detection-bypass` - Bypass root detection
+- `anti-debug-bypass` - Bypass anti-debugging techniques
+- `method-tracer` - Trace method calls
+- `crypto-logger` - Log cryptographic operations
+- `http-logger` - Log HTTP requests
+
+### Application Hooking
+
+```bash
+# List installed apps
+f4f hook apps
+
+# List running apps
+f4f hook apps --running
+
+# Hook with bypass scripts
+f4f hook run com.example.app --bypass ssl --bypass root
+
+# Hook with spawn mode
+f4f hook run com.example.app --spawn --script ssl-pinning-bypass
+
+# Start/stop apps
+f4f hook start com.example.app
+f4f hook kill com.example.app
+```
+
+### Health Diagnostics
+
+```bash
+# Run all health checks
+f4f doctor
+```
+
+### Configuration
+
+```bash
+# Show current config
+f4f config show
+
+# Set a value
+f4f config set default_device ABC123
+
+# Initialize config file
+f4f config init
 ```
 
 ---
 
-## 📱 Multi-Device Support
+## 📜 Built-in Scripts
 
-F-for-Frida fully supports multiple connected devices. Use the `-s` or `--device` flag to target a specific device:
+F-for-Frida includes several pre-built Frida scripts for common security testing tasks:
+
+| Script | Category | Description |
+|--------|----------|-------------|
+| `ssl-pinning-bypass` | Network | Bypass SSL certificate pinning (OkHttp, TrustManager, etc.) |
+| `root-detection-bypass` | Security | Bypass common root detection mechanisms |
+| `anti-debug-bypass` | Security | Bypass anti-debugging techniques |
+| `method-tracer` | Analysis | Trace method calls with arguments and return values |
+| `crypto-logger` | Crypto | Log cryptographic operations (AES, RSA, hashing) |
+| `http-logger` | Network | Log HTTP/HTTPS requests and responses |
+
+### Using Scripts
 
 ```bash
-# List all devices first
-f4f devices
+# Quick bypass setup
+f4f hook run com.target.app --bypass ssl --bypass root --spawn
 
-# Target specific device for any command
-f4f status -s RF8M33XXXXX
-f4f install --latest -s emulator-5554
-f4f start -s RF8M33XXXXX
+# Use specific script
+f4f hook run com.target.app --script crypto-logger
+
+# Export and customize
+f4f scripts export ssl-pinning-bypass -o my_bypass.js
+# Edit my_bypass.js as needed
+frida -U -f com.target.app -l my_bypass.js
 ```
 
-If only one device is connected, it's automatically selected. If multiple devices are connected without specifying one, you'll be prompted to select.
+---
+
+## 🌐 Wireless ADB Support
+
+F-for-Frida supports wireless ADB connections for untethered testing:
+
+### Quick Setup (USB → WiFi)
+
+```bash
+# With device connected via USB
+f4f wireless setup
+
+# Output: Wireless setup complete! Device available at 192.168.1.100:5555
+```
+
+### Android 11+ Wireless Debugging
+
+```bash
+# Enable Wireless debugging on device
+# Get pairing code from Developer Options
+
+f4f wireless pair 192.168.1.100:37123 123456
+f4f wireless connect 192.168.1.100:5555
+```
+
+### Managing Wireless Devices
+
+```bash
+# List wireless devices
+f4f wireless list
+
+# Disconnect specific device
+f4f wireless disconnect 192.168.1.100:5555
+
+# Disconnect all
+f4f wireless disconnect
+```
+
+---
+
+## ⚙️ Configuration
+
+F-for-Frida supports configuration via files or environment variables.
+
+### Config File
+
+Create `~/.f4f/config.yaml`:
+
+```yaml
+# Default device to use
+default_device: ABC123
+
+# Default Frida version
+default_version: "16.1.17"
+
+# Auto-start server after install
+auto_start: true
+
+# Frida server port
+frida_port: 27042
+
+# Wireless settings
+wireless_port: 5555
+saved_wireless_devices:
+  - "192.168.1.100:5555"
+
+# Logging
+verbose: false
+log_file: ~/.f4f/frida.log
+```
+
+### Environment Variables
+
+```bash
+export F4F_DEFAULT_DEVICE=ABC123
+export F4F_DEFAULT_VERSION=16.1.17
+export F4F_VERBOSE=true
+export F4F_FRIDA_PORT=27042
+```
 
 ---
 
@@ -255,16 +377,22 @@ F-for-Frida/
 │   ├── __init__.py           # Package initialization
 │   ├── cli.py                # CLI interface (Click + Rich)
 │   ├── core/                 # Core functionality
-│   │   ├── __init__.py
 │   │   ├── adb.py            # ADB client wrapper
 │   │   ├── device.py         # Device management
-│   │   └── frida_manager.py  # Frida server management
+│   │   ├── frida_manager.py  # Frida server management
+│   │   ├── wireless.py       # Wireless ADB support
+│   │   ├── scripts.py        # Frida scripts management
+│   │   ├── doctor.py         # Health diagnostics
+│   │   └── hooker.py         # App hooking helpers
 │   └── utils/                # Utilities
-│       ├── __init__.py
+│       ├── config.py         # Configuration management
 │       ├── downloader.py     # Download utilities
 │       └── logger.py         # Logging configuration
+├── tests/                    # Unit tests
+├── .github/                  # GitHub Actions CI/CD
 ├── main.py                   # Entry point
 ├── setup.py                  # Package setup
+├── pyproject.toml            # Modern Python packaging
 ├── requirements.txt          # Dependencies
 ├── LICENSE                   # MIT License
 └── README.md                 # This file
@@ -272,107 +400,93 @@ F-for-Frida/
 
 ---
 
-## 🔧 Configuration
+## 🩺 Troubleshooting
 
-### Logging
-
-Enable verbose logging with the `--verbose` flag:
+### Quick Diagnostics
 
 ```bash
-f4f --verbose status
+f4f doctor
 ```
 
-Save logs to file:
-
-```bash
-f4f --log-file frida.log install --latest
-```
-
-### Default Frida Port
-
-Frida server uses port **27042** by default. This is checked when verifying server status.
-
----
-
-## 🐛 Troubleshooting
+This checks:
+- Python version
+- ADB installation
+- XZ Utils
+- Device connection
+- Root access
+- SELinux status
+- Frida server status
+- Frida client installation
 
 ### Common Issues
 
 <details>
 <summary><strong>❌ "No device connected"</strong></summary>
 
-1. Ensure USB debugging is enabled on your device
-2. Check USB cable connection
-3. Run `adb devices` to verify ADB sees your device
-4. Authorize the computer on your device if prompted
+1. Ensure USB debugging is enabled
+2. Check USB cable
+3. Run `adb devices` to verify
+4. Authorize on device if prompted
 </details>
 
 <details>
 <summary><strong>❌ "Device is not rooted"</strong></summary>
 
-Frida requires root access. Options:
-1. Root your device using Magisk or similar
-2. Use an emulator with root access
-3. For non-root, use `frida-gadget` instead (manual integration)
+Root your device with Magisk or use a rooted emulator.
 </details>
 
 <details>
 <summary><strong>❌ "'xz' command not found"</strong></summary>
 
-Install XZ Utils:
-- **Windows**: `winget install xz` or download from [tukaani.org](https://tukaani.org/xz/)
-- **Linux**: `sudo apt install xz-utils`
-- **macOS**: `brew install xz`
+- Windows: `winget install xz`
+- Linux: `sudo apt install xz-utils`
+- macOS: `brew install xz`
 </details>
 
 <details>
 <summary><strong>❌ "Frida server fails to start"</strong></summary>
 
 1. Check SELinux: `adb shell su -c "setenforce 0"`
-2. Verify binary permissions: `adb shell ls -la /data/local/tmp/frida-server*`
+2. Verify permissions: `adb shell chmod 755 /data/local/tmp/frida-server*`
 3. Check logs: `adb logcat | grep frida`
-4. Try reinstalling: `f4f install --latest --force`
-</details>
-
-<details>
-<summary><strong>❌ "Download failed"</strong></summary>
-
-1. Check internet connection
-2. Verify the Frida version exists: `f4f versions`
-3. GitHub may be rate-limiting - wait a few minutes
+4. Reinstall: `f4f install --latest --force`
 </details>
 
 ---
 
-## 🤝 Contributing
-
-Contributions are welcome! Here's how you can help:
-
-1. **Fork** the repository
-2. **Create** a feature branch (`git checkout -b feature/amazing-feature`)
-3. **Commit** your changes (`git commit -m 'Add amazing feature'`)
-4. **Push** to the branch (`git push origin feature/amazing-feature`)
-5. **Open** a Pull Request
-
-### Development Setup
+## 🧪 Testing
 
 ```bash
-# Clone your fork
-git clone https://github.com/YOUR_USERNAME/F-for-Frida.git
-cd F-for-Frida
-
 # Install dev dependencies
 pip install -e ".[dev]"
 
 # Run tests
-pytest
+pytest tests/ -v
+
+# Run with coverage
+pytest tests/ --cov=f_for_frida
 
 # Format code
 black f_for_frida/
 
 # Lint
 flake8 f_for_frida/
+
+# Type check
+mypy f_for_frida/
 ```
+
+---
+
+## 🤝 Contributing
+
+Contributions are welcome! See [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.
+
+1. **Fork** the repository
+2. **Create** a feature branch
+3. **Commit** your changes
+4. **Push** to the branch
+5. **Open** a Pull Request
 
 ---
 
