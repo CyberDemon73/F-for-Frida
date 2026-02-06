@@ -481,6 +481,35 @@ class Automator:
         self.fm = FridaManager(device_serial=device_serial)
         self.adb = ADBClient(device_serial=device_serial)
     
+    def get_target_version(self) -> Tuple[str, str]:
+        """
+        Determine the target Frida version to install.
+        
+        Priority:
+        1. Match host's Frida client version (for compatibility)
+        2. Use recommended version for Android version
+        3. Fall back to latest
+        
+        Returns:
+            Tuple of (version, reason)
+        """
+        # Check host's Frida client version first
+        client = self.checker.get_frida_client_version()
+        if client.installed and client.version:
+            return client.version, f"Matching host Frida client v{client.version}"
+        
+        # Fall back to device recommendation
+        rec = self.checker.get_recommended_version()
+        if rec and rec.recommended_frida_version:
+            return rec.recommended_frida_version, f"Recommended for Android {rec.android_version}"
+        
+        # Last resort: latest
+        latest = get_latest_frida_version()
+        if latest:
+            return latest, "Latest available version"
+        
+        return "16.1.17", "Default fallback version"
+    
     def analyze(self) -> Dict:
         """
         Analyze device and current setup.
@@ -496,12 +525,21 @@ class Automator:
             "server_status": self.fm.get_server_status(),
             "issues": [],
             "actions": [],
+            "target_version": None,
+            "target_reason": None,
         }
+        
+        # Determine target version for installation/fix
+        target_version, target_reason = self.get_target_version()
+        results["target_version"] = target_version
+        results["target_reason"] = target_reason
         
         # Analyze issues and needed actions
         compat = results["compatibility"]
+        client = results["versions"]["client"]
+        server = results["versions"]["server"]
         
-        if not results["versions"]["client"].installed:
+        if not client.installed:
             results["issues"].append("Frida Python library not installed on host")
             results["actions"].append({
                 "action": "install_frida_client",
@@ -509,21 +547,29 @@ class Automator:
                 "description": "Install Frida client and tools"
             })
         
-        if not results["versions"]["server"].installed:
-            rec = results["recommendation"]
-            version = rec.recommended_frida_version if rec else "latest"
+        if not server.installed:
             results["issues"].append("Frida server not installed on device")
             results["actions"].append({
                 "action": "install_frida_server",
-                "command": f"f4f install {version}",
-                "description": f"Install Frida server {version}"
+                "version": target_version,
+                "command": f"f4f install {target_version}",
+                "description": f"Install Frida server {target_version} ({target_reason})"
             })
         elif compat.status == VersionStatus.MISMATCH:
+            # Version mismatch - install matching version
+            if client.installed and client.version:
+                fix_version = client.version
+                fix_reason = f"Match host client v{client.version}"
+            else:
+                fix_version = target_version
+                fix_reason = target_reason
+            
             results["issues"].append(f"Version mismatch: {compat.message}")
             results["actions"].append({
                 "action": "fix_version",
-                "command": compat.fix_command,
-                "description": "Fix version mismatch"
+                "version": fix_version,
+                "command": f"f4f install {fix_version}",
+                "description": f"Install Frida server {fix_version} ({fix_reason})"
             })
         
         if not results["server_status"]["running"] and results["versions"]["server"].installed:
@@ -574,18 +620,28 @@ class Automator:
             
             try:
                 if action_type == "install_frida_server":
-                    rec = analysis["recommendation"]
-                    version = rec.recommended_frida_version if rec else None
+                    # Use version from action (already calculated for compatibility)
+                    version = action.get("version") or analysis.get("target_version")
                     if version:
                         arch = analysis["device"]["frida_arch"]
-                        path = self.fm.install_server(version, arch)
+                        logger.info(f"Installing Frida server {version} to match host client")
+                        path = self.fm.install_server(version, arch, force=True)
                         success = path is not None
-                        message = f"Installed {version}" if success else "Installation failed"
+                        message = f"Installed v{version} (matches host)" if success else "Installation failed"
                     else:
                         message = "Could not determine version to install"
                 
                 elif action_type == "fix_version":
-                    success, message = self.checker.fix_version_mismatch()
+                    # Get version from action or use client version
+                    version = action.get("version")
+                    if version:
+                        arch = analysis["device"]["frida_arch"]
+                        logger.info(f"Fixing version mismatch: installing {version}")
+                        path = self.fm.install_server(version, arch, force=True)
+                        success = path is not None
+                        message = f"Installed v{version} (matches host)" if success else "Installation failed"
+                    else:
+                        success, message = self.checker.fix_version_mismatch()
                 
                 elif action_type == "start_server":
                     installed = self.fm.list_installed_servers()

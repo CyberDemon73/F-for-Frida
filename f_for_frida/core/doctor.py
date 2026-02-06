@@ -405,11 +405,50 @@ class Doctor:
                 fix_action=fix_start_server
             )
         else:
+            # Not installed - determine version to install based on client
+            target_version = None
+            target_msg = "latest"
+            
+            try:
+                import frida
+                target_version = frida.__version__
+                target_msg = f"{target_version} (matches host client)"
+            except ImportError:
+                pass
+            
+            def fix_install_server():
+                from .compatibility import VersionChecker
+                from .device import DeviceManager as DM
+                
+                dm_inner = DM()
+                info = dm_inner.get_device_info(serial)
+                if not info:
+                    return False
+                
+                # Get version to install (match client)
+                version = target_version
+                if not version:
+                    try:
+                        import frida
+                        version = frida.__version__
+                    except ImportError:
+                        from ..utils.downloader import get_latest_frida_version
+                        version = get_latest_frida_version()
+                
+                if version:
+                    path = fm.install_server(version, info.frida_architecture, force=True)
+                    if path:
+                        # Start the server
+                        fm.start_server(path)
+                        return True
+                return False
+            
             return CheckResult(
                 "Frida Server",
                 CheckStatus.ERROR,
-                "Not installed",
-                "Run: f4f install --latest"
+                f"Not installed (will install v{target_msg})",
+                f"Run: f4f install {target_version or '--latest'}",
+                fix_action=fix_install_server
             )
     
     def check_version_compatibility(self) -> CheckResult:
